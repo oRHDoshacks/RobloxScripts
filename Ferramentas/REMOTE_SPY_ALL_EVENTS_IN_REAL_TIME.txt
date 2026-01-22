@@ -1,0 +1,1 @@
+loadstring(game:HttpGet('https://raw.githubusercontent.com/Kixdev/remote-spy-events-kix-roblox/main/main.lua'))()
