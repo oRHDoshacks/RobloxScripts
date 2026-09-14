@@ -267,10 +267,8 @@ ExtrasTab:CreateSlider({
 
 ConfigTab:CreateButton({
     Name = "Remover script",
-    Description = "Desativa o script e remove os nomes exibidos",
     Callback = RemoveScript
 })
-
 
 local function HeadText(Ped, Text)
     local head = Ped:FindFirstChild("Head")
