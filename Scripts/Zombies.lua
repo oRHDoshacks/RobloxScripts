@@ -13,6 +13,8 @@ local ShowHealthBars = false
 local ShowLines = false
 local RotationEnabled = true
 local MouseMovementAimEnabled = false
+local AimFovRadius = 300
+local ShowFovCircle = true
 local TeleportBehindEnabled = false
 local TeleportDistance = 5
 local VisibleCheck = false
@@ -24,6 +26,7 @@ local InputEndedConnection
 local VisualConnection
 local TransparentParts = {}
 local VisualObjects = {}
+local FovCircle
 local CurrentTargetPosition
 local CurrentTarget
 
@@ -52,6 +55,11 @@ local function RemoveScript()
 
     if VisualConnection then
         VisualConnection:Disconnect()
+    end
+
+    if FovCircle then
+        FovCircle:Remove()
+        FovCircle = nil
     end
 
     for model, objects in pairs(VisualObjects) do
@@ -140,6 +148,26 @@ AimTab:CreateToggle({
         end
     end
 }, "VisibleCheck")
+
+AimTab:CreateSlider({
+    Name = "Raio do FOV",
+    Description = "Define a distancia maxima do alvo a partir do centro da tela",
+    Range = {50, 1000},
+    Increment = 10,
+    CurrentValue = 300,
+    Callback = function(value)
+        AimFovRadius = value
+    end
+}, "AimFovRadius")
+
+AimTab:CreateToggle({
+    Name = "Mostrar FOV",
+    Description = "Exibe a regiao usada pela mira",
+    CurrentValue = true,
+    Callback = function(value)
+        ShowFovCircle = value
+    end
+}, "ShowFovCircle")
 
 AimTab:CreateDropdown({
     Name = "Botao de ativacao",
@@ -500,6 +528,8 @@ function CreateVisualObjects(model)
 end
 
 function UpdateVisuals()
+    UpdateFovCircle()
+
     if not ShowBoxes and not ShowHealthBars and not ShowLines then
         HideVisualObjects()
         return
@@ -596,6 +626,51 @@ function UpdateVisuals()
     end
 end
 
+function IsPositionInsideAimFov(position)
+    local camera = Word.CurrentCamera
+    if not camera then
+        return false
+    end
+
+    local screenPoint = camera:WorldToViewportPoint(position)
+    if screenPoint.Z <= 0 then
+        return false
+    end
+
+    local viewportSize = camera.ViewportSize
+    local center = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    local screenPosition = Vector2.new(screenPoint.X, screenPoint.Y)
+    return (screenPosition - center).Magnitude <= AimFovRadius
+end
+
+function UpdateFovCircle()
+    if not Drawing or type(Drawing.new) ~= "function" then
+        return
+    end
+
+    if not FovCircle then
+        local success, circle = pcall(Drawing.new, "Circle")
+        if not success then
+            return
+        end
+        circle.Color = Color3.fromRGB(255, 255, 255)
+        circle.Thickness = 1
+        circle.Filled = false
+        FovCircle = circle
+    end
+
+    local camera = Word.CurrentCamera
+    if not camera then
+        FovCircle.Visible = false
+        return
+    end
+
+    local viewportSize = camera.ViewportSize
+    FovCircle.Visible = ShowFovCircle
+    FovCircle.Position = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    FovCircle.Radius = AimFovRadius
+end
+
 function Z_ombies()
 if TransparentObjectsEnabled then
     RestoreTransparency()
@@ -609,7 +684,8 @@ local targetZombie = nil
 
 local boss = GetBoss()
 local bossHead = boss and GetZombieHead(boss)
-if bossHead and (not VisibleCheck or IsZombieVisible(boss, bossHead)) then
+if bossHead and IsPositionInsideAimFov(bossHead.Position)
+    and (not VisibleCheck or IsZombieVisible(boss, bossHead)) then
     local playerPosition = Word:WaitForChild(Player.Name):GetPivot().Position
     local bossDistance = (playerPosition - bossHead.Position).Magnitude
     local bossName = boss:FindFirstChild("ZombieName")
@@ -633,7 +709,9 @@ for _, zombie in ipairs(zombies) do
 
     local position = head.Position
     local distance = (playerPosition - head.Position).Magnitude
-    if (not VisibleCheck or IsZombieVisible(zombie, head)) and mindistance > distance then
+    if IsPositionInsideAimFov(position)
+        and (not VisibleCheck or IsZombieVisible(zombie, head))
+        and mindistance > distance then
 		mindistance = distance
 		minposition = position
         headPosition = head.Position
