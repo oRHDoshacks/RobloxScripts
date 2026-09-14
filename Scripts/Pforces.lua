@@ -3,7 +3,6 @@ local Players = game:GetService("Players")
 local Word =  game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local Zombies = Word.Zombies
 local Player = Players.LocalPlayer
 local Mouse = Player:GetMouse()
 local IsMouseButton1Down = false
@@ -29,21 +28,90 @@ local VisualObjects = {}
 local FovCircle
 local CurrentTargetPosition
 local CurrentTarget
-local ZombieModelsCache = {}
-local ZombieModelsCacheTime = 0
+local EnemyModelsCache = {}
+local EnemyModelsCacheTime = 0
+local PlayerTagCache = {}
+local PlayerTagCacheTime = 0
 
-local function GetZombieModels()
+local function GetLocalCharacter()
+    local ignoreFolder = Word:FindFirstChild("Ignore")
+    if not ignoreFolder then
+        return Player.Character
+    end
+
+    local namedCharacter = ignoreFolder:FindFirstChild(Player.Name)
+    if namedCharacter and namedCharacter:IsA("Model") then
+        return namedCharacter
+    end
+
+    for _, instance in ipairs(ignoreFolder:GetChildren()) do
+        if instance:IsA("Model") then
+            return instance
+        end
+    end
+
+    return Player.Character
+end
+
+local function GetEnemyModels()
     local now = os.clock()
-    if now - ZombieModelsCacheTime < 0.25 then
-        return ZombieModelsCache
+    if now - EnemyModelsCacheTime < 0.25 then
+        return EnemyModelsCache
     end
 
-    table.clear(ZombieModelsCache)
-    for _, zombie in ipairs(Zombies:GetChildren()) do
-        table.insert(ZombieModelsCache, zombie)
+    local playersFolder = Word:FindFirstChild("Players")
+    if not playersFolder then
+        table.clear(EnemyModelsCache)
+        EnemyModelsCacheTime = now
+        table.clear(PlayerTagCache)
+        return {}
     end
-    ZombieModelsCacheTime = now
-    return ZombieModelsCache
+
+    table.clear(EnemyModelsCache)
+    for _, enemyFolder in ipairs(playersFolder:GetChildren()) do
+        for _, model in ipairs(enemyFolder:GetChildren()) do
+            if model:IsA("Model") then
+                table.insert(EnemyModelsCache, model)
+            end
+        end
+    end
+    EnemyModelsCacheTime = now
+    table.clear(PlayerTagCache)
+    return EnemyModelsCache
+end
+
+local function GetPlayerTag(model)
+    if not model then
+        return nil, nil
+    end
+
+    local now = os.clock()
+    if now - PlayerTagCacheTime < 0.25 and PlayerTagCache[model] then
+        return PlayerTagCache[model][1], PlayerTagCache[model][2]
+    end
+
+    for _, instance in ipairs(model:GetDescendants()) do
+        if instance:IsA("BasePart") then
+            local nameTagGui = instance:FindFirstChild("NameTagGui", true)
+            local playerTag = nameTagGui and nameTagGui:FindFirstChild("PlayerTag", true)
+            if playerTag and (playerTag:IsA("TextLabel") or playerTag:IsA("TextButton")) then
+                PlayerTagCache[model] = {instance, playerTag}
+                PlayerTagCacheTime = now
+                return instance, playerTag
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+local function SetPlayerTagsVisible(visible)
+    for _, enemyModel in ipairs(GetEnemyModels()) do
+        local _, playerTag = GetPlayerTag(enemyModel)
+        if playerTag then
+            playerTag.Visible = visible
+        end
+    end
 end
 
 local function RestoreTransparency()
@@ -85,11 +153,10 @@ local function RemoveScript()
         VisualObjects[model] = nil
     end
 
-    for _, zombie in ipairs(GetZombieModels()) do
-        local head = zombie:FindFirstChild("Head")
-        local pedInfo = head and head:FindFirstChild("PedInfo")
-        if pedInfo then
-            pedInfo:Destroy()
+    for _, enemyModel in ipairs(GetEnemyModels()) do
+        local _, playerTag = GetPlayerTag(enemyModel)
+        if playerTag then
+            playerTag.Visible = false
         end
     end
 
@@ -203,19 +270,17 @@ AimTab:CreateDropdown({
 
 VisualTab:CreateToggle({
     Name = "Mostrar nomes",
-    Description = "Exibe ou oculta os nomes dos zumbis",
+    Description = "Exibe ou oculta os nomes dos jogadores",
     CurrentValue = true,
     Callback = function(value)
         ShowNames = value
-        if not value then
-            RemoveZombieNames()
-        end
+        SetPlayerTagsVisible(value)
     end
 }, "ShowNames")
 
 VisualTab:CreateToggle({
     Name = "Mostrar boxes",
-    Description = "Exibe uma caixa ao redor dos zumbis",
+    Description = "Exibe uma caixa ao redor dos jogadores",
     CurrentValue = false,
     Callback = function(value)
         ShowBoxes = value
@@ -227,7 +292,7 @@ VisualTab:CreateToggle({
 
 VisualTab:CreateToggle({
     Name = "Mostrar barra de vida",
-    Description = "Exibe a vida atual dos zumbis",
+    Description = "Exibe a vida atual dos jogadores",
     CurrentValue = false,
     Callback = function(value)
         ShowHealthBars = value
@@ -239,7 +304,7 @@ VisualTab:CreateToggle({
 
 VisualTab:CreateToggle({
     Name = "Mostrar linhas",
-    Description = "Exibe uma linha da tela ate os zumbis",
+    Description = "Exibe uma linha da tela ate os jogadores",
     CurrentValue = false,
     Callback = function(value)
         ShowLines = value
@@ -286,42 +351,19 @@ ConfigTab:CreateButton({
     Callback = RemoveScript
 })
 
-local function HeadText(Ped, Text)
-    local head = Ped:FindFirstChild("Head")
-
-    if not head then
-        return
-    end
-    	if head:FindFirstChild("PedInfo") then
-            head.PedInfo.TextLabel.Text = Text
-            return
-        end
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "PedInfo"
-    billboard.Adornee = head
-    billboard.Size = UDim2.new(0, 200, 0, 10)
-    billboard.StudsOffset = Vector3.new(0, 3, 0)
-    billboard.AlwaysOnTop = true
-    billboard.Parent = head
-
-    local text = Instance.new("TextLabel")
-    text.Size = UDim2.new(1, 0, 1, 0)
-    text.BackgroundTransparency = 1
-    text.Text = Text
-    text.TextScaled = true
-    text.TextColor3 = Color3.fromRGB(255, 0, 0)
-    text.TextStrokeTransparency = 0
-    text.Parent = billboard
-end
 function distanceMinima(Player, Ped)
-    local PlayerPosition = Word:WaitForChild(Player.Name):GetPivot().Position
+    local localCharacter = GetLocalCharacter()
+    local PlayerPosition = localCharacter and localCharacter:GetPivot().Position
+    if not PlayerPosition then
+        return math.huge
+    end
     local PedPosition = Ped:GetPivot().Position
     local distance = (PlayerPosition - PedPosition).Magnitude
     return distance
 end
 
-function IsZombieVisible(zombie, head)
-    local character = Player.Character
+function IsPlayerVisible(targetCharacter, head)
+    local character = GetLocalCharacter()
     local originPart = character and (character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart"))
     if not originPart or not head then
         return false
@@ -331,21 +373,19 @@ function IsZombieVisible(zombie, head)
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
     local ignoredCharacters = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character then
-            table.insert(ignoredCharacters, player.Character)
-        end
+    if character then
+        table.insert(ignoredCharacters, character)
     end
     raycastParams.FilterDescendantsInstances = ignoredCharacters
 
     local direction = head.Position - originPart.Position
     local result = Word:Raycast(originPart.Position, direction, raycastParams)
 
-    return not result or result.Instance:IsDescendantOf(zombie)
+    return not result or result.Instance:IsDescendantOf(targetCharacter)
 end
 
-function MakeBlockingObjectsTransparent(zombie, head)
-    local character = Player.Character
+function MakeBlockingObjectsTransparent(targetCharacter, head)
+    local character = GetLocalCharacter()
     local originPart = character and (character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart"))
     if not originPart or not head then
         return
@@ -355,12 +395,14 @@ function MakeBlockingObjectsTransparent(zombie, head)
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
     local ignoredInstances = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character then
-            table.insert(ignoredInstances, player.Character)
-        end
+    local localCharacter = GetLocalCharacter()
+    if localCharacter then
+        table.insert(ignoredInstances, localCharacter)
     end
-    table.insert(ignoredInstances, zombie)
+    for _, enemyModel in ipairs(GetEnemyModels()) do
+        table.insert(ignoredInstances, enemyModel)
+    end
+    table.insert(ignoredInstances, targetCharacter)
 
     local direction = head.Position - originPart.Position
     local remainingDirection = direction
@@ -376,16 +418,16 @@ function MakeBlockingObjectsTransparent(zombie, head)
         end
 
         local part = result.Instance
-        local isZombiePart = part:IsDescendantOf(Zombies)
+        local isTargetPart = part:IsDescendantOf(targetCharacter)
         local isPlayerPart = false
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Character and part:IsDescendantOf(player.Character) then
+        for _, enemyModel in ipairs(GetEnemyModels()) do
+            if part:IsDescendantOf(enemyModel) then
                 isPlayerPart = true
                 break
             end
         end
 
-        if part:IsA("BasePart") and not isZombiePart and not isPlayerPart then
+        if part:IsA("BasePart") and not isTargetPart and not isPlayerPart then
             if TransparentParts[part] == nil then
                 TransparentParts[part] = {
                     LocalTransparencyModifier = part.LocalTransparencyModifier,
@@ -396,7 +438,7 @@ function MakeBlockingObjectsTransparent(zombie, head)
             part.CanCollide = false
         end
 
-        if not isZombiePart and not isPlayerPart then
+        if not isTargetPart and not isPlayerPart then
             table.insert(ignoredInstances, part)
         else
             break
@@ -411,58 +453,23 @@ function MakeBlockingObjectsTransparent(zombie, head)
     end
 end
 
-function GetZombieHead(zombie)
-    local head = zombie:FindFirstChild("Head")
-    if head and head:IsA("BasePart") then
-        return head
+function GetPlayerHead(character)
+    local part, playerTag = GetPlayerTag(character)
+    if playerTag then
+        local textColor = playerTag.TextColor3
+        if textColor.R > 0.8 and textColor.G < 0.2 and textColor.B < 0.2 then
+            return part
+        end
     end
     return nil
 end
 
-function GetBoss()
-    local map = Word:FindFirstChild("Map")
-    local bossFolder = map and map:FindFirstChild("BossFolder")
-    return bossFolder and bossFolder:FindFirstChild("Boss")
+function UpdatePlayerNames()
+    SetPlayerTagsVisible(true)
 end
 
-function UpdateZombieNames()
-    local boss = GetBoss()
-    local bossHead = boss and GetZombieHead(boss)
-    if bossHead then
-        local playerPosition = Word:WaitForChild(Player.Name):GetPivot().Position
-        local bossDistance = (playerPosition - bossHead.Position).Magnitude
-        local bossName = boss:FindFirstChild("ZombieName")
-        local displayName = bossName and tostring(bossName.Value) or "Boss"
-        HeadText(boss, displayName .. " (" .. math.floor(bossDistance) .. ")")
-    end
-
-    local playerCharacter = Word:WaitForChild(Player.Name)
-    local playerPosition = playerCharacter:GetPivot().Position
-    for _, zombie in ipairs(GetZombieModels()) do
-        local head = GetZombieHead(zombie)
-        local zombieName = zombie:FindFirstChild("ZombieName")
-        if head and zombieName then
-            local distance = (playerPosition - head.Position).Magnitude
-            HeadText(zombie, tostring(zombieName.Value) .. " (" .. math.floor(distance) .. ")")
-        end
-    end
-end
-
-function RemoveZombieNames()
-    for _, zombie in ipairs(Zombies:GetChildren()) do
-        local head = zombie:FindFirstChild("Head")
-        local pedInfo = head and head:FindFirstChild("PedInfo")
-        if pedInfo then
-            pedInfo:Destroy()
-        end
-    end
-
-    local boss = GetBoss()
-    local bossHead = boss and boss:FindFirstChild("Head")
-    local pedInfo = bossHead and bossHead:FindFirstChild("PedInfo")
-    if pedInfo then
-        pedInfo:Destroy()
-    end
+function RemovePlayerNames()
+    SetPlayerTagsVisible(false)
 end
 
 function HideVisualObjects()
@@ -554,21 +561,13 @@ function UpdateVisuals()
         return
     end
 
-    local models = {}
-    local boss = GetBoss()
-    if boss then
-        table.insert(models, boss)
-    end
-    for _, zombie in ipairs(Zombies:GetChildren()) do
-        table.insert(models, zombie)
-    end
+    local models = GetEnemyModels()
 
     local activeModels = {}
     for _, model in ipairs(models) do
-        local head = GetZombieHead(model)
+        local head = GetPlayerHead(model)
         if head then
             activeModels[model] = true
-            local isBoss = model == boss
             local objects = VisualObjects[model] or CreateVisualObjects(model)
             if objects then
                 local boxCFrame, boxSize = model:GetBoundingBox()
@@ -599,9 +598,7 @@ function UpdateVisuals()
                 local isVisible = visibleCorners > 0
                 if objects.Box then
                     objects.Box.Visible = isVisible and ShowBoxes
-                    objects.Box.Color = isBoss
-                        and Color3.fromRGB(170, 0, 255)
-                        or Color3.fromRGB(255, 255, 255)
+                    objects.Box.Color = Color3.fromRGB(255, 255, 255)
                     objects.Box.Position = Vector2.new(minX, minY)
                     objects.Box.Size = Vector2.new(maxX - minX, maxY - minY)
                 end
@@ -625,9 +622,7 @@ function UpdateVisuals()
                     objects.Line.Visible = isVisible and ShowLines
                     objects.Line.From = Vector2.new(viewportSize.X / 2, viewportSize.Y)
                     objects.Line.To = Vector2.new((minX + maxX) / 2, maxY)
-                    objects.Line.Color = isBoss
-                        and Color3.fromRGB(170, 0, 255)
-                        or Color3.fromRGB(255, 255, 255)
+                    objects.Line.Color = Color3.fromRGB(255, 255, 255)
                 end
             end
         end
@@ -685,69 +680,48 @@ function UpdateFovCircle()
     FovCircle.Radius = AimFovRadius
 end
 
-function Z_ombies()
-if TransparentObjectsEnabled then
-    RestoreTransparency()
-end
-
-local zombies = Zombies:GetChildren()
-local mindistance = math.huge
-local minposition = nil
-local headPosition = nil
-local targetZombie = nil
-
-local boss = GetBoss()
-local bossHead = boss and GetZombieHead(boss)
-if bossHead and IsPositionInsideAimFov(bossHead.Position)
-    and (not VisibleCheck or IsZombieVisible(boss, bossHead)) then
-    local playerPosition = Word:WaitForChild(Player.Name):GetPivot().Position
-    local bossDistance = (playerPosition - bossHead.Position).Magnitude
-    local bossName = boss:FindFirstChild("ZombieName")
-    local displayName = bossName and tostring(bossName.Value) or "Boss"
-
-    if TransparentObjectsEnabled and not VisibleCheck then
-        MakeBlockingObjectsTransparent(boss, bossHead)
+function GetTarget()
+    if TransparentObjectsEnabled then
+        RestoreTransparency()
     end
 
-    return bossHead.Position, boss
-end
+    local character = GetLocalCharacter()
+    if not character then
+        return nil, nil
+    end
+    local playerPosition = character:GetPivot().Position
 
-local playerCharacter = Word:WaitForChild(Player.Name)
-local playerPosition = playerCharacter:GetPivot().Position
+    local nearestDistance = math.huge
+    local nearestPosition = nil
+    local nearestCharacter = nil
 
-for _, zombie in ipairs(zombies) do    	
-    local head = GetZombieHead(zombie)
-    if not head then
-        continue
+    for _, targetCharacter in ipairs(GetEnemyModels()) do
+        local head = GetPlayerHead(targetCharacter)
+        if head then
+            local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health > 0 then
+                local position = head.Position
+                local distance = (playerPosition - position).Magnitude
+                if IsPositionInsideAimFov(position)
+                    and (not VisibleCheck or IsPlayerVisible(targetCharacter, head))
+                    and distance < nearestDistance then
+                    nearestDistance = distance
+                    nearestPosition = position
+                    nearestCharacter = targetCharacter
+                end
+            end
+        end
     end
 
-    local position = head.Position
-    local distance = (playerPosition - head.Position).Magnitude
-    if IsPositionInsideAimFov(position)
-        and (not VisibleCheck or IsZombieVisible(zombie, head))
-        and mindistance > distance then
-		mindistance = distance
-		minposition = position
-        headPosition = head.Position
-        targetZombie = zombie
+    if TransparentObjectsEnabled and not VisibleCheck and nearestCharacter then
+        MakeBlockingObjectsTransparent(nearestCharacter, GetPlayerHead(nearestCharacter))
     end
-end
 
-if TransparentObjectsEnabled and not VisibleCheck and targetZombie then
-    MakeBlockingObjectsTransparent(targetZombie, targetZombie:FindFirstChild("Head"))
-end
-
-    return headPosition, targetZombie
+    return nearestPosition, nearestCharacter
 end
 
 function GetTeleportTarget()
-    local boss = GetBoss()
-    local bossHead = boss and GetZombieHead(boss)
-    if bossHead then
-        return bossHead.Position, boss
-    end
-
-    local character = Word:FindFirstChild(Player.Name)
+    local character = GetLocalCharacter()
     if not character then
         return nil, nil
     end
@@ -755,25 +729,25 @@ function GetTeleportTarget()
     local playerPosition = character:GetPivot().Position
     local nearestDistance = math.huge
     local nearestPosition = nil
-    local nearestZombie = nil
+    local nearestCharacter = nil
 
-    for _, zombie in ipairs(Zombies:GetChildren()) do
-        local head = GetZombieHead(zombie)
-        if head then
-            local distance = (playerPosition - head.Position).Magnitude
-            if distance < nearestDistance then
-                nearestDistance = distance
-                nearestPosition = head.Position
-                nearestZombie = zombie
+    for _, targetCharacter in ipairs(GetEnemyModels()) do
+            local head = GetPlayerHead(targetCharacter)
+            if head then
+                local distance = (playerPosition - head.Position).Magnitude
+                if distance < nearestDistance then
+                    nearestDistance = distance
+                    nearestPosition = head.Position
+                    nearestCharacter = targetCharacter
+                end
             end
-        end
     end
 
-    return nearestPosition, nearestZombie
+    return nearestPosition, nearestCharacter
 end
 
 function TeleportBehindNearest()
-    local character = Player.Character
+    local character = GetLocalCharacter()
     local rootPart = character and character:FindFirstChild("HumanoidRootPart")
     local targetPosition, target = GetTeleportTarget()
     if not targetPosition or not target or not rootPart then
@@ -810,12 +784,9 @@ function RotateViewUsingMouse(targetPosition)
 
     local camera = Word.CurrentCamera
     local screenPoint = camera:WorldToViewportPoint(targetPosition)
-
-    local viewportSize = camera.ViewportSize
-    local targetX = math.clamp(screenPoint.X, 0, viewportSize.X)
-    local targetY = math.clamp(screenPoint.Y, 0, viewportSize.Y)
-    local shiftX = (targetX - viewportSize.X / 2) / 4
-    local shiftY = (targetY - viewportSize.Y / 2) / 4
+    local mousePosition = UserInputService:GetMouseLocation()
+    local shiftX = (screenPoint.X - mousePosition.X) / 4
+    local shiftY = (screenPoint.Y - mousePosition.Y) / 4
     mousemoverel(shiftX, shiftY)
 end
 
@@ -843,7 +814,7 @@ task.spawn(function()
             break
         end
 
-        CurrentTargetPosition, CurrentTarget = Z_ombies()
+        CurrentTargetPosition, CurrentTarget = GetTarget()
     end
 end)
 
@@ -884,9 +855,9 @@ task.spawn(function()
         end
 
         if ShowNames then
-            UpdateZombieNames()
+            UpdatePlayerNames()
         else
-            RemoveZombieNames()
+            RemovePlayerNames()
         end
     end
 end)
