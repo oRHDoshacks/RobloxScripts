@@ -14,6 +14,8 @@ local RotationEnabled = true
 local MouseMovementAimEnabled = false
 local AimFovRadius = 300
 local ShowFovCircle = true
+local TeleportBehindEnabled = false
+local TeleportDistance = 5
 local VisibleCheck = false
 local TransparentObjectsEnabled = false
 local ActivationButton = Enum.UserInputType.MouseButton1
@@ -323,6 +325,26 @@ ExtrasTab:CreateToggle({
         end
     end
 }, "TransparentObjectsEnabled")
+
+ExtrasTab:CreateToggle({
+    Name = "Teleporte para tras",
+    Description = "Teleporta para tras do alvo ao pressionar E",
+    CurrentValue = false,
+    Callback = function(value)
+        TeleportBehindEnabled = value
+    end
+}, "TeleportBehindEnabled")
+
+ExtrasTab:CreateSlider({
+    Name = "Distancia do teleporte",
+    Description = "Define quantos studs o jogador ficara atras do alvo",
+    Range = {1, 30},
+    Increment = 1,
+    CurrentValue = 5,
+    Callback = function(value)
+        TeleportDistance = value
+    end
+}, "TeleportDistance")
 
 ConfigTab:CreateButton({
     Name = "Remover script",
@@ -698,6 +720,45 @@ function GetTarget()
     return nearestPosition, nearestCharacter
 end
 
+function GetTeleportTarget()
+    local character = GetLocalCharacter()
+    if not character then
+        return nil, nil
+    end
+
+    local playerPosition = character:GetPivot().Position
+    local nearestDistance = math.huge
+    local nearestPosition = nil
+    local nearestCharacter = nil
+
+    for _, targetCharacter in ipairs(GetEnemyModels()) do
+            local head = GetPlayerHead(targetCharacter)
+            if head then
+                local distance = (playerPosition - head.Position).Magnitude
+                if distance < nearestDistance then
+                    nearestDistance = distance
+                    nearestPosition = head.Position
+                    nearestCharacter = targetCharacter
+                end
+            end
+    end
+
+    return nearestPosition, nearestCharacter
+end
+
+function TeleportBehindNearest()
+    local character = GetLocalCharacter()
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    local targetPosition, target = GetTeleportTarget()
+    if not targetPosition or not target or not rootPart then
+        return
+    end
+
+    local targetPivot = target:GetPivot()
+    local destination = targetPivot.Position - targetPivot.LookVector * TeleportDistance
+    rootPart.CFrame = CFrame.lookAt(destination, targetPosition)
+end
+
 function RotateView(targetPosition)
     if not targetPosition then
         return
@@ -730,6 +791,11 @@ function RotateViewUsingMouse(targetPosition)
 end
 
 InputBeganConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.E and TeleportBehindEnabled then
+        TeleportBehindNearest()
+        return
+    end
+
     if not gameProcessed and input.UserInputType == ActivationButton then
         IsMouseButton1Down = true
     end
